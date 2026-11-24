@@ -72,6 +72,16 @@ def test_weather_lag_is_true_calendar_lag(feats):
     assert checked > 600, "too few rows actually verified"
 
 
+def test_unmapped_weather_label_fails_loudly():
+    """A silent .map() turns an unseen label into NaN and dropna() deletes
+    the row without a word -- how the 20 BAD days once vanished. Every real
+    label is mapped, so the data alone can never trip this; inject one."""
+    raw = load_raw()
+    raw.loc[raw.index[100], "weather"] = "SNOW"
+    with pytest.raises(ValueError, match="unmapped weather labels"):
+        build_features(raw)
+
+
 def test_no_missing_values(feats):
     assert feats[feature_columns(feats)].isna().sum().sum() == 0
 
