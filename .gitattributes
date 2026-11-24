@@ -1,4 +1,5 @@
+# LF in the repo and on every checkout. A Windows run writes CRLF files
+# (e.g. reports/metrics.json); git then treats them as unchanged.
+* text=auto eol=lf
 # Keep the raw CSV byte-identical on every OS: make data checks its sha256.
 data/raw/** -text
-# Hook scripts must keep LF endings, or bash fails on a Windows checkout.
-*.sh text eol=lf
