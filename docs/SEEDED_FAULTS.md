@@ -5,8 +5,9 @@ fixes it, so `git show` on the fault commit is the exact change.
 
 How the output below was produced:
 
-- **Red test output:** `make test` (`python -m pytest tests/ -q`), trimmed to
-  the failing test's traceback and the summary.
+- **Red test output:** fault 1 (by hand): `make test`, trimmed to the
+  failing test's traceback and the summary. Faults 2-3: `record.sh` runs
+  `python3 -m pytest tests -q --tb=short` and keeps the last 25 lines.
 - **Hook stderr:** `.claude/hooks/check_leakage.sh` fed, on stdin, the
   PostToolUse payload Claude Code sends for the seeding Edit (`tool_name`
   `Edit`, `tool_input.file_path` the edited file). Fault 1 was done by
