@@ -8,7 +8,7 @@ import pandas as pd
 import pytest
 
 from src.config import FORBIDDEN, TARGET
-from src.features import build_features, feature_columns
+from src.features import build_features, encode_weather, feature_columns
 from src.ingest import load_raw
 
 
@@ -55,6 +55,21 @@ def test_rolling_mean_excludes_today(feats):
     if all(d in by_date.index for d in window):
         expected = sum(by_date[d] for d in window) / 7
         assert feats.set_index("dteday").cnt_roll_7[date] == pytest.approx(expected)
+
+
+def test_weather_lag_is_true_calendar_lag(feats):
+    """weather_severity_lag_1 on date d must be the encoded weather of d-1 in
+    calendar days: never d itself (same-day leakage of the lag), and never
+    d-2 smuggled across the missing 2011-03-10 by a row-based shift."""
+    raw = load_raw().set_index("dteday")
+    expected = encode_weather(raw.weather)
+    checked = 0
+    for date, lag in feats.set_index("dteday").weather_severity_lag_1.items():
+        prev = date - pd.Timedelta(days=1)
+        assert prev in expected.index, f"{date.date()} kept a lag across a missing day"
+        assert lag == expected[prev], f"bad weather lag at {date.date()}"
+        checked += 1
+    assert checked > 600, "too few rows actually verified"
 
 
 def test_no_missing_values(feats):
