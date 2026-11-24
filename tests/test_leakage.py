@@ -72,6 +72,19 @@ def test_weather_lag_is_true_calendar_lag(feats):
     assert checked > 600, "too few rows actually verified"
 
 
+def test_every_target_lag_matches_the_calendar(feats):
+    """Recompute every lagged-target feature from raw counts by calendar date,
+    on every row. Nothing checked cnt_lag_7 before: setting it to today's
+    count (validation R^2 0.9999) left the whole suite green."""
+    cnt = load_raw().set_index("dteday")[TARGET]
+    day = pd.Timedelta(days=1)
+    for date, row in feats.set_index("dteday").iterrows():
+        assert row.cnt_lag_1 == cnt[date - day], f"cnt_lag_1 at {date.date()}"
+        assert row.cnt_lag_7 == cnt[date - 7 * day], f"cnt_lag_7 at {date.date()}"
+        window = [cnt[date - k * day] for k in range(1, 8)]
+        assert row.cnt_roll_7 == pytest.approx(sum(window) / 7), f"cnt_roll_7 at {date.date()}"
+
+
 def test_unmapped_weather_label_fails_loudly():
     """A silent .map() turns an unseen label into NaN and dropna() deletes
     the row without a word -- how the 20 BAD days once vanished. Every real
