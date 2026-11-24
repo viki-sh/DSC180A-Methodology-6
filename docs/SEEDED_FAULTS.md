@@ -6,13 +6,14 @@ fixes it, so `git show` on the fault commit is the exact change.
 How the output below was produced:
 
 - **Red test output:** fault 1 (by hand): `make test`, trimmed to the
-  failing test's traceback and the summary. Faults 2-3: `record.sh` runs
+  failing test's traceback and the summary. Faults 2, 3, 5: `record.sh` runs
   `python3 -m pytest tests -q --tb=short` and keeps the last 25 lines.
 - **Hook stderr:** `.claude/hooks/check_leakage.sh` fed, on stdin, the
   PostToolUse payload Claude Code sends for the seeding Edit (`tool_name`
   `Edit`, `tool_input.file_path` the edited file). Faults 1 and 4 were
-  done by hand; faults 2 and 3 used `.claude/skills/seed-fault/record.sh`,
-  which does the same replay and writes the record.
+  done by hand; faults 2, 3 and 5 used `.claude/skills/seed-fault/record.sh`,
+  which does the same replay and writes the record. Fault 5 is beyond the
+  four the assignment asks for: it came from dry-running the skill.
 - **Turns:** tool calls spent fixing, from the first edit after the red
   output through the first green `make test` (the fault commit in between is
   bookkeeping and not counted). The agent that fixed
@@ -447,3 +448,126 @@ exit=2 stderr: Leakage tests failed after editing /home/claude/bikeshare-open/sr
 FAILED tests/test_leakage.py::test_no_forbidden_features - AssertionError: fo...
 1 failed, 8 passed in 0.11s
 ```
+
+## Fault 5: delete the .shift(LAG_WARMUP) from cnt_lag_7
+
+Exact change (`git diff HEAD`):
+
+```diff
+diff --git a/src/features.py b/src/features.py
+index f3e3fa9..0c542ab 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -77,7 +77,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
+     # without it, cnt_roll_7 would contain today's count. -----------------
+     # If you add a longer lag, raise LAG_WARMUP in src/config.py.
+     out["cnt_lag_1"] = out[TARGET].shift(1)
+-    out["cnt_lag_7"] = out[TARGET].shift(LAG_WARMUP)
++    out["cnt_lag_7"] = out[TARGET]
+     out["cnt_roll_7"] = out[TARGET].shift(1).rolling(LAG_WARMUP).mean()
+ 
+     return out.dropna().reset_index(drop=True)
+```
+
+Test output (`python3 -m pytest tests -q --tb=short`, last 25 lines, exit 0):
+
+```
+..................s...                                                   [100%]
+21 passed, 1 skipped in 0.98s
+```
+
+Hook stderr for an Edit of `src/features.py` (exit 0):
+
+```
+<empty>
+```
+
+
+## Fault 5: delete the .shift(LAG_WARMUP) from cnt_lag_7, with the new test
+
+Exact change (`git diff HEAD`):
+
+```diff
+diff --git a/src/features.py b/src/features.py
+index f3e3fa9..0c542ab 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -77,7 +77,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
+     # without it, cnt_roll_7 would contain today's count. -----------------
+     # If you add a longer lag, raise LAG_WARMUP in src/config.py.
+     out["cnt_lag_1"] = out[TARGET].shift(1)
+-    out["cnt_lag_7"] = out[TARGET].shift(LAG_WARMUP)
++    out["cnt_lag_7"] = out[TARGET]
+     out["cnt_roll_7"] = out[TARGET].shift(1).rolling(LAG_WARMUP).mean()
+ 
+     return out.dropna().reset_index(drop=True)
+diff --git a/tests/test_leakage.py b/tests/test_leakage.py
+index a894d2e..7673607 100644
+--- a/tests/test_leakage.py
++++ b/tests/test_leakage.py
+@@ -72,6 +72,19 @@ def test_weather_lag_is_true_calendar_lag(feats):
+     assert checked > 600, "too few rows actually verified"
+ 
+ 
++def test_every_target_lag_matches_the_calendar(feats):
++    """Recompute every lagged-target feature from raw counts by calendar date,
++    on every row. Nothing checked cnt_lag_7 before: setting it to today's
++    count (validation R^2 0.9999) left the whole suite green."""
++    cnt = load_raw().set_index("dteday")[TARGET]
++    day = pd.Timedelta(days=1)
++    for date, row in feats.set_index("dteday").iterrows():
++        assert row.cnt_lag_1 == cnt[date - day], f"cnt_lag_1 at {date.date()}"
++        assert row.cnt_lag_7 == cnt[date - 7 * day], f"cnt_lag_7 at {date.date()}"
++        window = [cnt[date - k * day] for k in range(1, 8)]
++        assert row.cnt_roll_7 == pytest.approx(sum(window) / 7), f"cnt_roll_7 at {date.date()}"
++
++
+ def test_unmapped_weather_label_fails_loudly():
+     """A silent .map() turns an unseen label into NaN and dropna() deletes
+     the row without a word -- how the 20 BAD days once vanished. Every real
+```
+
+Test output (`python3 -m pytest tests -q --tb=short`, last 25 lines, exit 1):
+
+```
+...............F...s...                                                  [100%]
+=================================== FAILURES ===================================
+__________________ test_every_target_lag_matches_the_calendar __________________
+tests/test_leakage.py:83: in test_every_target_lag_matches_the_calendar
+    assert row.cnt_lag_7 == cnt[date - 7 * day], f"cnt_lag_7 at {date.date()}"
+E   AssertionError: cnt_lag_7 at 2011-01-10
+E   assert 1321.0 == np.int64(1349)
+E    +  where 1321.0 = instant                        10.0\nseason                       WINTER\nyr                           2011.0\nmnth      ... 822.0\ncnt_lag_7                    1321.0\ncnt_roll_7                   1344.0\nName: 2011-01-10 00:00:00, dtype: object.cnt_lag_7
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_every_target_lag_matches_the_calendar - As...
+1 failed, 21 passed, 1 skipped in 1.08s
+```
+
+Hook stderr for an Edit of `src/features.py` (exit 2):
+
+```
+Leakage tests failed after editing /home/claude/bikeshare-open/src/features.py:
+
+[714 rows x 29 columns]
+
+    def test_every_target_lag_matches_the_calendar(feats):
+        """Recompute every lagged-target feature from raw counts by calendar date,
+        on every row. Nothing checked cnt_lag_7 before: setting it to today's
+        count (validation R^2 0.9999) left the whole suite green."""
+        cnt = load_raw().set_index("dteday")[TARGET]
+        day = pd.Timedelta(days=1)
+        for date, row in feats.set_index("dteday").iterrows():
+            assert row.cnt_lag_1 == cnt[date - day], f"cnt_lag_1 at {date.date()}"
+>           assert row.cnt_lag_7 == cnt[date - 7 * day], f"cnt_lag_7 at {date.date()}"
+E           AssertionError: cnt_lag_7 at 2011-01-10
+E           assert 1321.0 == np.int64(1349)
+E            +  where 1321.0 = instant                        10.0\nseason                       WINTER\nyr                           2011.0\nmnth      ... 822.0\ncnt_lag_7                    1321.0\ncnt_roll_7                   1344.0\nName: 2011-01-10 00:00:00, dtype: object.cnt_lag_7
+
+tests/test_leakage.py:83: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_every_target_lag_matches_the_calendar - As...
+1 failed, 9 passed in 0.12s
+```
+
+
+Turns to fix: 2 (one Edit restoring `.shift(LAG_WARMUP)`, keeping the new test; one `make test`: `22 passed, 1 skipped`). This one matters most: with the starter suite plus my earlier tests, a same-day leak through `cnt_lag_7` (ridge validation R^2 0.9999) was green everywhere.
