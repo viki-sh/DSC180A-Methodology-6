@@ -1,7 +1,17 @@
 # Seeded faults (Exercise 2)
 
-Each fault is its own commit (`fault N: ...`), followed by the commit that
-fixes it, so `git show` on the fault commit is the exact change.
+Each fault is its own commit (subject starting `fault`), followed by the
+commit that fixes it, so `git show` on the fault commit is the exact change.
+Fault 4 is the exception: its tampered CSV was never committed, so the
+fault and its fix share one commit, with the fix described in the message.
+
+| # | Fault | What went red | Hook | Turns to fix |
+|---|---|---|---|---|
+| 1 | `registered` added to `feature_columns` | `test_no_forbidden_features`, `test_raw_columns_reach_the_model_only_if_classified_as_features` | exit 2 | 2 |
+| 2 | `.shift(1)` deleted from `cnt_roll_7` | `test_rolling_mean_excludes_today` | exit 2 | 2 |
+| 3 | `raise` removed from `encode_weather` | nothing; then the new `test_unmapped_weather_label_fails_loudly` | exit 0, then 2 | 2 |
+| 4 | Bash `cp` over `data/raw/bike_daily.csv` | nothing (20 passed); now the sha256 check fails every stage and test | never runs for Bash | none, then 2 |
+| 5 | `.shift(LAG_WARMUP)` deleted from `cnt_lag_7` | nothing (ridge R^2 0.9999); then the new `test_every_target_lag_matches_the_calendar` | exit 0, then 2 | 2 |
 
 How the output below was produced:
 
@@ -93,7 +103,7 @@ FAILED tests/test_leakage.py::test_no_forbidden_features - AssertionError: fo...
 1 failed, 7 passed in 0.10s
 ```
 
-Turns to fix: **2** (one Edit removing `+ ["registered"]`, one `make test`:
+Turns to fix: 2 (one Edit removing `+ ["registered"]`, one `make test`:
 `19 passed in 1.05s`). Two tests caught it: the starter's `test_no_forbidden_features`
 and the new `test_raw_columns_reach_the_model_only_if_classified_as_features`.
 
