@@ -43,8 +43,8 @@ Work in this order. Paste output; never describe it.
 5. **Commit the fault:** `git add src tests` then
    `git commit -m "fault: $ARGUMENTS"`. Leave `docs/` unstaged.
 6. **Fix it** with the fewest edits: undo the seeded change, keep any new
-   test. Run `make test` until it passes. Count your turns, one tool call
-   per turn, from the RED line to the first green `make test`.
+   test. Run `make test` until it passes. Count your turns: tool calls
+   from your first fixing edit through the first green `make test`.
 7. **Close the record.** Append one line to the end of
    `docs/SEEDED_FAULTS.md`: `Turns to fix: N (what you did).` Then
    `git add -A` and `git commit -m "fix: $ARGUMENTS"`.

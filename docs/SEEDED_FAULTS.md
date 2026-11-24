@@ -13,8 +13,9 @@ How the output below was produced:
   `Edit`, `tool_input.file_path` the edited file). Fault 1 was done by
   hand; faults 2 and 3 used `.claude/skills/seed-fault/record.sh`, which does
   the same replay and writes the record.
-- **Turns:** one turn is one tool call by the agent, counted from seeing the
-  red output to the first green `make test`, inclusive. The agent that fixed
+- **Turns:** tool calls spent fixing, from the first edit after the red
+  output through the first green `make test` (the fault commit in between is
+  bookkeeping and not counted). The agent that fixed
   each fault (Claude Opus 5.5) also seeded it and knew the change, so these
   counts are lower bounds, not a measure of how hard the fault is to find.
 - **Environment:** Linux, Python 3.13, the versions pinned in
@@ -161,3 +162,120 @@ FAILED tests/test_leakage.py::test_rolling_mean_excludes_today - assert np.fl...
 
 
 Turns to fix: 2 (one Edit restoring `.shift(1)` before `.rolling(LAG_WARMUP)`, one `make test`: `19 passed in 0.95s`). Only one test guards this shift, and it checks a single date (row 200).
+
+## Fault 3: remove the raise from the weather encoder
+
+Exact change (`git diff HEAD`):
+
+```diff
+diff --git a/src/features.py b/src/features.py
+index f3e3fa9..86c4096 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -26,8 +26,6 @@ def encode_weather(series: pd.Series) -> pd.Series:
+     """
+     known = series.dropna()
+     unknown = set(known.unique()) - set(WEATHER_ORDER)
+-    if unknown:
+-        raise ValueError(f"unmapped weather labels: {sorted(unknown)}")
+     return series.map(WEATHER_ORDER).astype(float)
+ 
+ 
+```
+
+Test output (`python3 -m pytest tests -q --tb=short`, last 25 lines, exit 0):
+
+```
+...................                                                      [100%]
+19 passed in 0.98s
+```
+
+Hook stderr for an Edit of `src/features.py` (exit 0):
+
+```
+<empty>
+```
+
+
+## Fault 3: remove the raise from the weather encoder, with the new test
+
+Exact change (`git diff HEAD`):
+
+```diff
+diff --git a/src/features.py b/src/features.py
+index f3e3fa9..86c4096 100644
+--- a/src/features.py
++++ b/src/features.py
+@@ -26,8 +26,6 @@ def encode_weather(series: pd.Series) -> pd.Series:
+     """
+     known = series.dropna()
+     unknown = set(known.unique()) - set(WEATHER_ORDER)
+-    if unknown:
+-        raise ValueError(f"unmapped weather labels: {sorted(unknown)}")
+     return series.map(WEATHER_ORDER).astype(float)
+ 
+ 
+diff --git a/tests/test_leakage.py b/tests/test_leakage.py
+index 5d56c64..a894d2e 100644
+--- a/tests/test_leakage.py
++++ b/tests/test_leakage.py
+@@ -72,6 +72,16 @@ def test_weather_lag_is_true_calendar_lag(feats):
+     assert checked > 600, "too few rows actually verified"
+ 
+ 
++def test_unmapped_weather_label_fails_loudly():
++    """A silent .map() turns an unseen label into NaN and dropna() deletes
++    the row without a word -- how the 20 BAD days once vanished. Every real
++    label is mapped, so the data alone can never trip this; inject one."""
++    raw = load_raw()
++    raw.loc[raw.index[100], "weather"] = "SNOW"
++    with pytest.raises(ValueError, match="unmapped weather labels"):
++        build_features(raw)
++
++
+ def test_no_missing_values(feats):
+     assert feats[feature_columns(feats)].isna().sum().sum() == 0
+ 
+```
+
+Test output (`python3 -m pytest tests -q --tb=short`, last 25 lines, exit 1):
+
+```
+..............F.....                                                     [100%]
+=================================== FAILURES ===================================
+___________________ test_unmapped_weather_label_fails_loudly ___________________
+tests/test_leakage.py:81: in test_unmapped_weather_label_fails_loudly
+    with pytest.raises(ValueError, match="unmapped weather labels"):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE ValueError
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_unmapped_weather_label_fails_loudly - Fail...
+1 failed, 19 passed in 1.29s
+```
+
+Hook stderr for an Edit of `src/features.py` (exit 2):
+
+```
+Leakage tests failed after editing /home/claude/bikeshare-open/src/features.py:
+......F..                                                                [100%]
+=================================== FAILURES ===================================
+___________________ test_unmapped_weather_label_fails_loudly ___________________
+
+    def test_unmapped_weather_label_fails_loudly():
+        """A silent .map() turns an unseen label into NaN and dropna() deletes
+        the row without a word -- how the 20 BAD days once vanished. Every real
+        label is mapped, so the data alone can never trip this; inject one."""
+        raw = load_raw()
+        raw.loc[raw.index[100], "weather"] = "SNOW"
+>       with pytest.raises(ValueError, match="unmapped weather labels"):
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       Failed: DID NOT RAISE ValueError
+
+tests/test_leakage.py:81: Failed
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_unmapped_weather_label_fails_loudly - Fail...
+1 failed, 8 passed in 0.09s
+```
+
+
+Turns to fix: 2 (one Edit restoring the two-line `raise`, keeping the new test; one `make test`: `20 passed in 1.20s`). The real finding is the GREEN run above: with the starter suite this fault was invisible to both the tests and the hook.
