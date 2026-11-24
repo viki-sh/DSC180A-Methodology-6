@@ -3,9 +3,19 @@ import pandas as pd
 import pytest
 from sklearn.metrics import r2_score
 
-from src.config import LAG_WARMUP, TARGET
+from src.config import (
+    CALENDAR_COLS,
+    ENCODED_COLS,
+    KEY_COLS,
+    LAG_WARMUP,
+    LEAKAGE_COLS,
+    RAW_FEATURE_COLS,
+    TARGET,
+    TIME_INDEX_COLS,
+    UNVERIFIED_COLS,
+)
 from src.features import build_features, feature_columns, reindex_to_calendar
-from src.ingest import load_raw
+from src.ingest import load_raw, unclassified_columns
 from src.train import MODELS, temporal_split
 
 
@@ -17,6 +27,30 @@ def raw():
 @pytest.fixture(scope="module")
 def feats(raw):
     return build_features(raw)
+
+
+def test_every_raw_column_is_classified(raw):
+    """feature_columns() keeps every numeric column not in FORBIDDEN, so a
+    column nobody has classified would reach the model unreviewed.
+    test_no_forbidden_features cannot see that case; this test can."""
+    assert not unclassified_columns(raw.columns)
+
+
+def test_a_new_raw_column_is_flagged(raw):
+    """The check must be able to fail: a same-day restatement of the target
+    appended to the CSV is flagged instead of silently becoming a feature."""
+    assert unclassified_columns([*raw.columns, "cnt_today"]) == {"cnt_today"}
+
+
+def test_raw_columns_reach_the_model_only_if_classified_as_features(raw, feats):
+    passthrough = set(feature_columns(feats)) & set(raw.columns)
+    assert passthrough == RAW_FEATURE_COLS, f"raw columns used as features: {sorted(passthrough)}"
+
+
+def test_each_column_has_exactly_one_reason():
+    classes = [LEAKAGE_COLS, TIME_INDEX_COLS, UNVERIFIED_COLS,
+               RAW_FEATURE_COLS, ENCODED_COLS, CALENDAR_COLS, KEY_COLS]
+    assert sum(map(len, classes)) == len(set().union(*classes)), "a column is in two sets"
 
 
 def test_calendar_is_complete_before_lagging(raw):

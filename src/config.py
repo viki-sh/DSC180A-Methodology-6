@@ -45,6 +45,24 @@ UNVERIFIED_COLS = {"cnt_2d_bfr"}
 # What feature_columns() and the tests actually enforce.
 FORBIDDEN = LEAKAGE_COLS | TIME_INDEX_COLS | UNVERIFIED_COLS
 
+# --- Every other raw column, classified -----------------------------------
+# feature_columns() keeps any numeric column not in FORBIDDEN, so a new
+# numeric column in the CSV (say, a same-day count) would reach the model
+# with nobody deciding it should. src.ingest.load_raw refuses any column
+# that is not in exactly one of these sets or FORBIDDEN.
+
+# 4. Same-day weather measurements, used as-is. `atemp` (feels-like) is on
+#    an undocumented scale, r = 0.99 with `temp`; harmless, just not Celsius.
+RAW_FEATURE_COLS = {"temp", "atemp", "hum", "windspeed"}
+# 5. Text flags re-encoded in src/features.py; the encoded column is the feature.
+ENCODED_COLS = {"holiday", "workday", "weather"}
+# 6. Restatements of the date; calendar features are built from `dteday` itself.
+CALENDAR_COLS = {"season", "mnth", "weekday"}
+# 7. The date every row and every lag is aligned on.
+KEY_COLS = {"dteday"}
+
+CLASSIFIED = FORBIDDEN | RAW_FEATURE_COLS | ENCODED_COLS | CALENDAR_COLS | KEY_COLS
+
 # Temporal split: train on 2011, validate on H1 2012, test on H2 2012.
 TRAIN_END = "2011-12-31"
 VALID_END = "2012-06-30"

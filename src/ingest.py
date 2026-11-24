@@ -7,10 +7,15 @@ import urllib.request
 
 import pandas as pd
 
-from src.config import DATA_URL, RAW
+from src.config import CLASSIFIED, DATA_URL, RAW
 
 EXPECTED_MIN_ROWS = 700
 REQUIRED_COLS = {"dteday", "cnt", "casual", "registered", "temp", "hum", "windspeed"}
+
+
+def unclassified_columns(columns) -> set[str]:
+    """Raw columns that no set in src/config.py accounts for."""
+    return set(columns) - CLASSIFIED
 
 
 def download(force: bool = False) -> None:
@@ -27,6 +32,12 @@ def load_raw() -> pd.DataFrame:
         raise ValueError(f"raw data is missing required columns: {sorted(missing)}")
     if len(df) < EXPECTED_MIN_ROWS:
         raise ValueError(f"raw data has only {len(df)} rows; expected >= {EXPECTED_MIN_ROWS}")
+    new = unclassified_columns(df.columns)
+    if new:
+        raise ValueError(
+            f"unclassified raw columns {sorted(new)}: put each in a set in "
+            "src/config.py, with a reason, before it can reach the model"
+        )
     return df
 
 
