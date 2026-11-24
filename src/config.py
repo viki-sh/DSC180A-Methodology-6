@@ -20,6 +20,10 @@ DATA_URL = (
     "https://raw.githubusercontent.com/christophM/"
     "interpretable-ml-book/master/data/bike.csv"
 )
+# sha256 of the checked-in copy. src.ingest.load_raw refuses any other bytes,
+# so every `make` stage and every test fails if data/raw/ is overwritten --
+# including by a Bash `cp`, which the Write/Edit deny rules cannot see.
+RAW_SHA256 = "a6bed1577f6e4de56dcfae6d8315985073cc0ad3446c8c99ed60c86a0b5ad9dc"
 
 TARGET = "cnt"
 

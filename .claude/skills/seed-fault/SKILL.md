@@ -49,4 +49,5 @@ Work in this order. Paste output; never describe it.
    `docs/SEEDED_FAULTS.md`: `Turns to fix: N (what you did).` Then
    `git add -A` and `git commit -m "fix: $ARGUMENTS"`.
 
-Never seed a fault in `data/raw/`: the raw CSV is immutable.
+Never seed a fault in `data/raw/`: the raw CSV is immutable, and
+`make data` refuses it if its sha256 changes (fault 4 shows why).

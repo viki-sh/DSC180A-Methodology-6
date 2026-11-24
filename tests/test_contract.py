@@ -53,6 +53,19 @@ def test_each_column_has_exactly_one_reason():
     assert sum(map(len, classes)) == len(set().union(*classes)), "a column is in two sets"
 
 
+def test_tampered_raw_file_is_refused(tmp_path, monkeypatch):
+    """The sha256 guard must be able to fail: drop one row (the Sandy day an
+    over-eager cleanup would delete) and load_raw refuses the file."""
+    import src.ingest as ingest
+
+    lines = ingest.RAW.read_text().splitlines(keepends=True)
+    tampered = tmp_path / "bike_daily.csv"
+    tampered.write_text("".join(line for line in lines if '"2012-10-29"' not in line))
+    monkeypatch.setattr(ingest, "RAW", tampered)
+    with pytest.raises(ValueError, match="immutable"):
+        ingest.load_raw()
+
+
 def test_calendar_is_complete_before_lagging(raw):
     """The reindexed frame must have no gaps, or the lags are wrong."""
     grid = reindex_to_calendar(raw)

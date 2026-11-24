@@ -10,9 +10,9 @@ How the output below was produced:
   `python3 -m pytest tests -q --tb=short` and keeps the last 25 lines.
 - **Hook stderr:** `.claude/hooks/check_leakage.sh` fed, on stdin, the
   PostToolUse payload Claude Code sends for the seeding Edit (`tool_name`
-  `Edit`, `tool_input.file_path` the edited file). Fault 1 was done by
-  hand; faults 2 and 3 used `.claude/skills/seed-fault/record.sh`, which does
-  the same replay and writes the record.
+  `Edit`, `tool_input.file_path` the edited file). Faults 1 and 4 were
+  done by hand; faults 2 and 3 used `.claude/skills/seed-fault/record.sh`,
+  which does the same replay and writes the record.
 - **Turns:** tool calls spent fixing, from the first edit after the red
   output through the first green `make test` (the fault commit in between is
   bookkeeping and not counted). The agent that fixed
@@ -279,3 +279,171 @@ FAILED tests/test_leakage.py::test_unmapped_weather_label_fails_loudly - Fail...
 
 
 Turns to fix: 2 (one Edit restoring the two-line `raise`, keeping the new test; one `make test`: `20 passed in 1.20s`). The real finding is the GREEN run above: with the starter suite this fault was invisible to both the tests and the hook.
+
+## Fault 4: overwrite `data/raw/` with a Bash `cp`, which the hook cannot see
+
+Done by hand, in the working tree only. The tampered CSV was never
+committed. The "cleanup" is one an over-eager agent might do: drop the
+Hurricane Sandy day (22 rides) from the raw file. State before any new
+guard (at commit `exercise 4: touch the test set once, for the pre-registered pairs`):
+
+```
+$ git status --short; sha256sum data/raw/bike_daily.csv
+a6bed1577f6e4de56dcfae6d8315985073cc0ad3446c8c99ed60c86a0b5ad9dc  data/raw/bike_daily.csv
+
+$ grep -v '"2012-10-29"' data/raw/bike_daily.csv > /tmp/bike_clean.csv && cp /tmp/bike_clean.csv data/raw/bike_daily.csv
+(exit 0, no output)
+
+$ # PostToolUse hook, fed the payload of that Bash call (its matcher is Edit|Write, so Claude Code never calls it for Bash at all):
+hook exit=0 (stderr empty)
+
+$ make test
+....................                                                     [100%]
+20 passed in 1.00s
+
+$ make all   # ingest + features lines, then the changed test scores
+OK ingest: 727 rows, 2011-01-03 -> 2012-12-31
+OK features: 706 rows, 15 features -> features.parquet
+
+$ git diff --stat; git diff -U0 reports/metrics.json
+ data/raw/bike_daily.csv |  1 -
+ reports/metrics.json    | 18 +++++++++---------
+ 2 files changed, 9 insertions(+), 10 deletions(-)
+-  "n_test": 184,
++  "n_test": 176,
+-      "r2": -2.1441,
+-      "mae": 2847.7
++      "r2": -2.4693,
++      "mae": 2876.0
+-      "r2": 0.5099,
+-      "mae": 840.1
++      "r2": 0.53,
++      "mae": 813.3
+-      "r2": 0.6124,
+-      "mae": 910.6
++      "r2": 0.6243,
++      "mae": 875.7
+-      "r2": -0.4687,
+-      "mae": 1950.4
++      "r2": -0.6165,
++      "mae": 1967.0
+
+$ sha256sum data/raw/bike_daily.csv
+a93dc1924f67db7e52ed954327dd910a29bfe8a248dc36bc34f0b734b68c96e1  data/raw/bike_daily.csv
+```
+
+**What happened:** nothing went red.
+
+- **Hook:** the PostToolUse matcher is `Edit|Write`, so Claude Code never
+  runs the hook for a Bash call. It would have ignored the payload anyway,
+  because there is no `file_path`.
+- **Permissions:** the deny rules `Write(./data/raw/**)` and
+  `Edit(./data/raw/**)` bind those two tools, not a shell `cp`. Because `cp`
+  is not in the allow list, the only defence in default mode was a human
+  reading the approval prompt.
+- **Pipeline:** all 20 tests passed and `make all` ran. The test set silently
+  lost 8 days (Sandy, plus the 7 rows whose lags span the new gap). Every
+  test score moved, and ridge and persistence both looked better: ridge
+  0.6124 -> 0.6243, persistence 0.5099 -> 0.5300.
+- **Detection:** only `git status` and the sha256 showed it.
+
+**What would have caught it, and what now does** (commit `fault 4: ...`):
+
+1. **A hash check in `make data`.** `src/ingest.load_raw` compares the file to
+   `RAW_SHA256` in `src/config.py`. Every make stage and every test loads
+   the raw file through it, so any write path fails loudly: Bash, an
+   editor, or a re-download from a changed mirror. This is the guarantee.
+2. **A `PreToolUse` hook on Bash** (`.claude/hooks/guard_raw.sh`). It blocks
+   the obvious commands before they run. It is a speed bump, not a
+   guarantee: a glob dodges its string match, as shown below.
+3. **A `Stop` hook** (`.claude/hooks/stop_gate.sh`). The agent cannot declare
+   itself done while `make test` is red.
+4. **Not used: a filesystem permission** (`chmod a-w`). git does not track
+   the write bit, so it would not survive a fresh clone.
+
+The same attack against the new guards:
+
+```
+$ # PreToolUse hook, fed the payload of the same Bash call:
+Blocked by guard_raw.sh: this command would write into data/raw/, which is immutable (make data checks its sha256). Read it with pandas, head, wc or sha256sum; write derived files to data/processed/. To undo a change: git checkout -- data/raw/
+guard exit=2
+
+$ # A glob dodges the string match (guard exit 0), so the overwrite lands:
+guard exit=0
+$ cp /tmp/bike_clean.csv data/r?w/bike_daily.cs?
+(exit 0)
+
+$ make data
+    )
+ValueError: bike_daily.csv has sha256 a93dc1924f67db7e, not a6bed1577f6e4de5: data/raw/ is immutable. Restore it with `git checkout -- data/raw/`.
+make: *** [Makefile:7: data] Error 1
+
+$ make test
+ERROR tests/test_split.py::test_splits_are_ordered_in_time - ValueError: bike...
+ERROR tests/test_split.py::test_no_overlapping_dates - ValueError: bike_daily...
+1 failed, 3 passed, 17 errors in 1.18s
+make: *** [Makefile:16: test] Error 1
+
+$ # Stop hook, fed a Stop payload (stop_hook_active false):
+Not done: the test suite is red. Fix it, or say plainly why you cannot.
+ERROR tests/test_contract.py::test_calendar_is_complete_before_lagging - Valu...
+ERROR tests/test_contract.py::test_only_expected_rows_are_dropped - ValueErro...
+ERROR tests/test_contract.py::test_beats_the_mean_baseline - ValueError: bike...
+ERROR tests/test_leakage.py::test_leakage_identity_holds - ValueError: bike_d...
+ERROR tests/test_leakage.py::test_no_forbidden_features - ValueError: bike_da...
+ERROR tests/test_leakage.py::test_lags_are_true_calendar_lags - ValueError: b...
+ERROR tests/test_leakage.py::test_lag_is_not_the_target - ValueError: bike_da...
+ERROR tests/test_leakage.py::test_rolling_mean_excludes_today - ValueError: b...
+ERROR tests/test_leakage.py::test_weather_lag_is_true_calendar_lag - ValueErr...
+ERROR tests/test_leakage.py::test_no_missing_values - ValueError: bike_daily....
+ERROR tests/test_leakage.py::test_dates_are_sorted_and_unique - ValueError: b...
+ERROR tests/test_split.py::test_splits_non_empty - ValueError: bike_daily.csv...
+ERROR tests/test_split.py::test_splits_are_ordered_in_time - ValueError: bike...
+ERROR tests/test_split.py::test_no_overlapping_dates - ValueError: bike_daily...
+1 failed, 3 passed, 17 errors in 1.06s
+stop hook exit=2
+```
+
+```
+$ git checkout -- data/raw/ && make data && make test
+OK ingest: 728 rows, 2011-01-03 -> 2012-12-31, sha256 a6bed1577f6e4de5
+21 passed in 1.09s
+```
+
+**Turns to fix:**
+
+- **Before the guards:** none. Nothing went red, so nothing prompted a fix;
+  the overwrite showed up only in `git status`.
+- **After the guards:** 2 (`git checkout -- data/raw/`, then
+  `make data && make test`: `21 passed`).
+
+### Related: the PostToolUse hook was blind on Windows
+
+While closing this gap I found two ways the starter hook passes silently on
+a Windows machine:
+
+- **Backslash paths:** Claude Code sends the edited path with backslashes,
+  and `*src/*.py` never matches them.
+- **The `python3` stub:** on many machines `python3` is a Store stub that
+  exits non-zero. That left `$path` empty, and the hook exited 0.
+
+The hook now normalises slashes and uses the first Python that actually
+runs. Real output, with fault 1 re-seeded in the working tree:
+
+```
+$ # fault 1 re-seeded in the working tree; Edit payload with a Windows path (C:\Users\viki\bikeshare-open\src\features.py)
+$ starter check_leakage.sh:
+exit=0 stderr_lines=0
+$ new check_leakage.sh:
+exit=2 stderr: Leakage tests failed after editing C:/Users/viki/bikeshare-open/src/features.py:
+FAILED tests/test_leakage.py::test_no_forbidden_features - AssertionError: fo...
+1 failed, 8 passed in 0.12s
+
+$ # same fault, POSIX path, but `python3` on PATH is a Store-style stub that exits non-zero (as on many Windows machines)
+$ PATH=/tmp/stubbin:$PATH starter check_leakage.sh:
+exit=0 stderr_lines=0
+$ PATH=/tmp/stubbin:$PATH new check_leakage.sh:
+exit=2 stderr: Leakage tests failed after editing /home/claude/bikeshare-open/src/features.py:
+FAILED tests/test_leakage.py::test_no_forbidden_features - AssertionError: fo...
+1 failed, 8 passed in 0.11s
+```

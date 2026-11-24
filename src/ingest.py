@@ -2,12 +2,13 @@
 
 Run: python -m src.ingest
 """
+import hashlib
 import sys
 import urllib.request
 
 import pandas as pd
 
-from src.config import CLASSIFIED, DATA_URL, RAW
+from src.config import CLASSIFIED, DATA_URL, RAW, RAW_SHA256
 
 EXPECTED_MIN_ROWS = 700
 REQUIRED_COLS = {"dteday", "cnt", "casual", "registered", "temp", "hum", "windspeed"}
@@ -25,7 +26,17 @@ def download(force: bool = False) -> None:
     urllib.request.urlretrieve(DATA_URL, RAW)
 
 
+def sha256(path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def load_raw() -> pd.DataFrame:
+    digest = sha256(RAW)
+    if digest != RAW_SHA256:
+        raise ValueError(
+            f"{RAW.name} has sha256 {digest[:16]}, not {RAW_SHA256[:16]}: data/raw/ is "
+            "immutable. Restore it with `git checkout -- data/raw/`."
+        )
     df = pd.read_csv(RAW, parse_dates=["dteday"])
     missing = REQUIRED_COLS - set(df.columns)
     if missing:
@@ -44,4 +55,5 @@ def load_raw() -> pd.DataFrame:
 if __name__ == "__main__":
     download(force="--force" in sys.argv)
     df = load_raw()
-    print(f"OK ingest: {len(df)} rows, {df.dteday.min().date()} -> {df.dteday.max().date()}")
+    print(f"OK ingest: {len(df)} rows, {df.dteday.min().date()} -> {df.dteday.max().date()}, "
+          f"sha256 {RAW_SHA256[:16]}")

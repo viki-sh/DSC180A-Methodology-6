@@ -1,0 +1,4 @@
+# Keep the raw CSV byte-identical on every OS: make data checks its sha256.
+data/raw/** -text
+# Hook scripts must keep LF endings, or bash fails on a Windows checkout.
+*.sh text eol=lf
