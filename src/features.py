@@ -67,6 +67,11 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # --- Weather: measured same-day, available to a forecaster ----------
     out["weather_severity"] = encode_weather(out.weather)
+    # Yesterday's weather, known by the end of d-1. cnt_lag_1 is depressed
+    # after a bad day (2011: +785 rides/day rebound after BAD), and this lets
+    # the model tell a bad-weather dip from a real drop in demand. Shifted on
+    # the calendar grid, so the day after 2011-03-10 gets NaN, not 03-09.
+    out["weather_severity_lag_1"] = out["weather_severity"].shift(1)
 
     # --- Lagged target: past values only. shift(1) is the whole ballgame;
     # without it, cnt_roll_7 would contain today's count. -----------------
