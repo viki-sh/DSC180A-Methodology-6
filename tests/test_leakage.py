@@ -61,6 +61,11 @@ def test_weather_lag_is_true_calendar_lag(feats):
     """weather_severity_lag_1 on date d must be the encoded weather of d-1 in
     calendar days: never d itself (same-day leakage of the lag), and never
     d-2 smuggled across the missing 2011-03-10 by a row-based shift."""
+    # Hand-checked in data/raw/bike_daily.csv (GOOD/MISTY/BAD = 0/1/2):
+    # 2012-10-28 was MISTY and 2012-10-29 (Hurricane Sandy) was BAD.
+    lag = feats.set_index("dteday").weather_severity_lag_1
+    assert lag[pd.Timestamp("2012-10-29")] == 1.0
+    assert lag[pd.Timestamp("2012-10-30")] == 2.0
     raw = load_raw().set_index("dteday")
     expected = encode_weather(raw.weather)
     checked = 0

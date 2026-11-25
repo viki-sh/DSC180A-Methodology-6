@@ -35,6 +35,39 @@ How the output below was produced:
   are unaffected: the starter's `make all` reproduced the tutorial's
   published metrics table to every digit.
 
+## Before the feature: the new test, red (Exercise 1)
+
+`test_weather_lag_is_true_calendar_lag` was written before
+`weather_severity_lag_1` existed. It failed for the right reason: the
+column is missing. The failing run below was re-run on 2026-11-25 by
+checking out commit `test: failing test for weather_severity_lag_1` and
+running `make test`. It is trimmed to the header, the error and the summary:
+
+```
+python -m pytest tests/ -q
+.........F.....                                                          [100%]
+=================================== FAILURES ===================================
+____________________ test_weather_lag_is_true_calendar_lag _____________________
+    ...  (traceback trimmed)
+E       AttributeError: 'DataFrame' object has no attribute 'weather_severity_lag_1'. Did you mean: 'weather_severity'?
+
+/usr/local/lib/python3.13/site-packages/pandas/core/generic.py:6194: AttributeError
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_weather_lag_is_true_calendar_lag - Attribu...
+1 failed, 14 passed in 1.29s
+make: *** [Makefile:16: test] Error 1
+```
+
+The original run on 2026-11-23, before the feature commit, ended the same
+way:
+
+```
+=========================== short test summary info ============================
+FAILED tests/test_leakage.py::test_weather_lag_is_true_calendar_lag - Attribu...
+1 failed, 14 passed in 1.19s
+make: *** [Makefile:16: test] Error 1
+```
+
 ## Fault 1: a forbidden column in `feature_columns`
 
 Exact change (commit `fault 1: add a forbidden column (registered) to feature_columns`):
@@ -371,6 +404,116 @@ a93dc1924f67db7e52ed954327dd910a29bfe8a248dc36bc34f0b734b68c96e1  data/raw/bike_
    itself done while `make test` is red.
 4. **Not used: a filesystem permission** (`chmod a-w`). git does not track
    the write bit, so it would not survive a fresh clone.
+
+Diff of the guard in `src/` and `.claude/settings.json` (commit `fault 4:
+...`, `git show -- src/config.py src/ingest.py .claude/settings.json`). The
+two new hook scripts are `.claude/hooks/guard_raw.sh` and
+`.claude/hooks/stop_gate.sh`.
+
+```diff
+diff --git a/.claude/settings.json b/.claude/settings.json
+index 5c849d8..6cb5400 100644
+--- a/.claude/settings.json
++++ b/.claude/settings.json
+@@ -7,6 +7,19 @@
+     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+   },
+   "hooks": {
++    "PreToolUse": [
++      {
++        "matcher": "Bash",
++        "hooks": [
++          {
++            "type": "command",
++            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard_raw.sh",
++            "timeout": 10,
++            "statusMessage": "Checking the command does not write into data/raw/..."
++          }
++        ]
++      }
++    ],
+     "PostToolUse": [
+       {
+         "matcher": "Edit|Write",
+@@ -19,6 +32,18 @@
+           }
+         ]
+       }
++    ],
++    "Stop": [
++      {
++        "hooks": [
++          {
++            "type": "command",
++            "command": "${CLAUDE_PROJECT_DIR}/.claude/hooks/stop_gate.sh",
++            "timeout": 120,
++            "statusMessage": "Running the test suite before finishing..."
++          }
++        ]
++      }
+     ]
+   },
+   "permissions": {
+diff --git a/src/config.py b/src/config.py
+index 44963e3..fc00450 100644
+--- a/src/config.py
++++ b/src/config.py
+@@ -20,6 +20,10 @@ DATA_URL = (
+     "https://raw.githubusercontent.com/christophM/"
+     "interpretable-ml-book/master/data/bike.csv"
+ )
++# sha256 of the checked-in copy. src.ingest.load_raw refuses any other bytes,
++# so every `make` stage and every test fails if data/raw/ is overwritten --
++# including by a Bash `cp`, which the Write/Edit deny rules cannot see.
++RAW_SHA256 = "a6bed1577f6e4de56dcfae6d8315985073cc0ad3446c8c99ed60c86a0b5ad9dc"
+ 
+ TARGET = "cnt"
+ 
+diff --git a/src/ingest.py b/src/ingest.py
+index a626733..b0436b1 100644
+--- a/src/ingest.py
++++ b/src/ingest.py
+@@ -2,12 +2,13 @@
+ 
+ Run: python -m src.ingest
+ """
++import hashlib
+ import sys
+ import urllib.request
+ 
+ import pandas as pd
+ 
+-from src.config import CLASSIFIED, DATA_URL, RAW
++from src.config import CLASSIFIED, DATA_URL, RAW, RAW_SHA256
+ 
+ EXPECTED_MIN_ROWS = 700
+ REQUIRED_COLS = {"dteday", "cnt", "casual", "registered", "temp", "hum", "windspeed"}
+@@ -25,7 +26,17 @@ def download(force: bool = False) -> None:
+     urllib.request.urlretrieve(DATA_URL, RAW)
+ 
+ 
++def sha256(path) -> str:
++    return hashlib.sha256(path.read_bytes()).hexdigest()
++
++
+ def load_raw() -> pd.DataFrame:
++    digest = sha256(RAW)
++    if digest != RAW_SHA256:
++        raise ValueError(
++            f"{RAW.name} has sha256 {digest[:16]}, not {RAW_SHA256[:16]}: data/raw/ is "
++            "immutable. Restore it with `git checkout -- data/raw/`."
++        )
+     df = pd.read_csv(RAW, parse_dates=["dteday"])
+     missing = REQUIRED_COLS - set(df.columns)
+     if missing:
+@@ -44,4 +55,5 @@ def load_raw() -> pd.DataFrame:
+ if __name__ == "__main__":
+     download(force="--force" in sys.argv)
+     df = load_raw()
+-    print(f"OK ingest: {len(df)} rows, {df.dteday.min().date()} -> {df.dteday.max().date()}")
++    print(f"OK ingest: {len(df)} rows, {df.dteday.min().date()} -> {df.dteday.max().date()}, "
++          f"sha256 {RAW_SHA256[:16]}")
+```
 
 The same attack against the new guards:
 
