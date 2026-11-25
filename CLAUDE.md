@@ -6,11 +6,15 @@ rides) one day ahead from calendar, weather, and lagged-demand features.
 ## Commands
 - `make all` - data -> features -> train; writes `reports/metrics.json`
 - `make test` - run this before claiming anything works
+- `/new-feature <feature>` - add a feature, failing test first
+- `/seed-fault <fault>` - break the pipeline on purpose, record the real
+  output in `docs/SEEDED_FAULTS.md`, then fix it
 
 ## Non-negotiable rules
 - **Never** put `casual` or `registered` in a feature set:
-  `casual + registered == cnt` exactly. Derive feature lists from
-  `FORBIDDEN` in `src/config.py`; never hand-type them.
+  `casual + registered == cnt` exactly. `FORBIDDEN` in `src/config.py`
+  also bars the time indexes `instant`, `yr`, `days_since_2011` and the
+  unverified `cnt_2d_bfr`. Derive feature lists from it; never hand-type them.
 - **Never** split this data randomly. Use `src.train.temporal_split`:
   train 2011, valid H1 2012, test H2 2012. Never tune on test, and do not
   quote test numbers while iterating.
